@@ -2,30 +2,6 @@
 #include "utility/MPU9250.h"
 #include "utility/quaternionFilters.h"
 
-#include <WiFi.h> 
-const char* ssid     = "<script>alert(0);</script>"; /*ここを書き換える*/
-const char* password = "' -- OR 1"; /*ここを書き換える*/
- 
-WiFiServer server(80);
- 
-void WifiServersetup()
-{
-    //WiFi.begin(ssid, password);
-    WiFi.softAP(ssid, password);
-    //while (WiFi.status() != WL_CONNECTED) {
-    //    delay(500);
-    //    Serial.println(".");
-    //}
-    Serial.println("connected");
-    Serial.println(WiFi.softAPIP());
-    delay(100);
-    M5.Lcd.println(WiFi.softAPIP());
-    delay(100);
-    server.begin();
-    delay(100);
-    Serial.println("server begin");
-    delay(100);
-}
 
 #define SerialDebug true  // Set to true to get Serial output for debugging
 
@@ -99,7 +75,7 @@ void MPU9250loop(void *arg)
     IMU.updateTime();
 
     IMU.delt_t = millis() - IMU.count;
-    if (IMU.delt_t > 500)
+    if (IMU.delt_t > 5000)
     {
       if(SerialDebug)
       {
@@ -125,50 +101,23 @@ void MPU9250loop(void *arg)
   }
 }
 
+void vTimerCallback( TimerHandle_t pxTimer ) {
+  Serial.println("timer expired");
+}
+
 void setup() {
   M5.begin();
   delay(1);
  
   MPU9250setup();
-  WifiServersetup();
-
   Serial.begin(115200);
   xTaskCreatePinnedToCore(MPU9250loop, "MPU9250", 0x10000, NULL, 1, NULL, 0);
+  TimerHandle_t x = xTimerCreate("Timer", ( 1000 / portTICK_PERIOD_MS ), pdTRUE, NULL, vTimerCallback);
+  xTimerStart( x, 0 );
   delay(100);
 }
  
 void loop() {
 
-WiFiClient client = server.available();   // listen for incoming clients
-  if (client) {                             // if you get a client,
-  String currentLine = "";                // make a String to hold incoming data from the client
-    while (client.connected()) {            // loop while the client's connected
-      if (client.available()) {             // if there's bytes to read from the client,
-        char c = client.read();             // read a byte, then
-        if (c == '\n') {                    // if the byte is a newline character
-          // if the current line is blank, you got two newline characters in a row.
-          // that's the end of the client HTTP request, so send a response:
-          if (currentLine.length() == 0) {
-            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-            // and a content-type so the client knows what's coming, then a blank line:
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:application/json");
-            client.println();
-            // the content of the HTTP response follows the header:
-            client.printf("{\"ax\":%f, \"ay\":%f, \"az\":%f, \"gx\":%f, \"gy\":%f, \"gz\":%f}\n", IMU.ax,IMU.ay,IMU.az,IMU.gx,IMU.gy,IMU.gz);
-            // The HTTP response ends with another blank line:
-            client.println();
-            // break out of the while loop:
-            break;
-          } else {    // if you got a newline, then clear currentLine:
-            currentLine = "";
-          }
-        } else if (c != '\r') {  // if you got anything else but a carriage return character,
-          currentLine += c;      // add it to the end of the currentLine
-        }
-      }
-    }
-    client.stop();
-  }
   M5.update();
 }
