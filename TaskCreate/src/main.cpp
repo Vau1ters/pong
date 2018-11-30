@@ -30,7 +30,6 @@ void WifiServersetup()
 void WifiServerloop(void *arg) {
 
 for(;;) {
-  Serial.println("webserverloop");
   delay(10);
   WiFiClient client = server.available();   // listen for incoming clients
     if (client) {                             // if you get a client,
