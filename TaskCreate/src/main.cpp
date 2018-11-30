@@ -1,30 +1,162 @@
 #include <M5Stack.h>
+#include <WiFi.h>
 #include "utility/MPU9250.h"
 #include "utility/quaternionFilters.h"
 
-#include <WiFi.h> 
 const char* ssid     = "<script>alert(0);</script>"; /*ここを書き換える*/
 const char* password = "' -- OR 1"; /*ここを書き換える*/
+const int port = 1234;
+boolean isServer;
+WiFiClient conn;
+
+#if 1
+#define ssid "nya"
+#define password "nyannyan"
+#endif
  
-WiFiServer server(80);
- 
-void WifiServersetup()
-{
-    //WiFi.begin(ssid, password);
-    WiFi.softAP(ssid, password);
-    //while (WiFi.status() != WL_CONNECTED) {
-    //    delay(500);
-    //    Serial.println(".");
-    //}
-    Serial.println("connected");
-    Serial.println(WiFi.softAPIP());
+static void WiFiSetup() {
+  M5.Lcd.println("press btn A or B");
+  while (true) {
+    if (M5.BtnA.wasPressed()) {
+      isServer = true;
+      Serial.println("btnA pressed; starting WiFi AP");
+      WiFi.softAP(ssid, password);
+      Serial.print("local IP address: ");
+      Serial.println(WiFi.softAPIP());
+
+      Serial.println("waiting for client...");
+      isServer = true;
+      WiFiServer server(port);
+      server.begin();
+      while (!(conn = server.available())) {
+        Serial.print(".");
+        delay(100);
+      }
+      server.end();
+      Serial.println("connected");
+      break;
+    }
+    if (M5.BtnB.wasPressed()) {
+      Serial.println("btnB pressed; connecting to WiFi AP");
+      WiFi.begin(ssid, password);
+      while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+      }
+      Serial.println("connected");
+      Serial.print("local IP address: ");
+      Serial.println(WiFi.localIP());
+      Serial.print("gateway IP address: ");
+      Serial.println(WiFi.gatewayIP());
+
+      Serial.println("connecting to server...");
+      isServer = false;
+      // Assuming the gateway is the other device
+      while (!conn.connect("192.168.43.22", port)) {
+      // while (!conn.connect(WiFi.gatewayIP(), port)) {
+        Serial.print(".");
+        delay(100);
+      }
+      Serial.println("connected");
+      break;
+    }
     delay(100);
-    M5.Lcd.println(WiFi.softAPIP());
-    delay(100);
-    server.begin();
-    delay(100);
-    Serial.println("server begin");
-    delay(100);
+    M5.update();
+  }
+  M5.Lcd.clear();
+  M5.update();
+}
+
+// An event from the other device would be one of:
+//  0. The other device started the game
+//     * (none)
+//  0. The other device hit the ball
+//     * x, dx, dy
+//  1. The other device failed to hit the ball
+//     * (none)
+//  2. The other device moved the paddle
+//     * x
+struct StartEvent { uint8_t type; };
+struct HitEvent { uint8_t type; uint32_t x; float dx, dy; };
+struct MissHitEvent { uint8_t type; };
+struct MoveEvent { uint8_t type; uint32_t x; };
+#define EventMaxSize 16
+
+static void notifyStartGame() {
+  assert(isServer);
+  union { uint8_t buf[EventMaxSize]; struct StartEvent e; } buf;
+  memset(&buf, 0, sizeof(buf));
+  buf.e.type = 0;
+  conn.write(buf.buf, sizeof(buf.buf));
+}
+
+static void notifyPaddleHit(uint32_t x, float dx, float dy) {
+  union { uint8_t buf[EventMaxSize]; struct HitEvent e; } buf;
+  memset(&buf, 0, sizeof(buf));
+  buf.e.type = 1;
+  buf.e.x = x;
+  buf.e.dx = dx;
+  buf.e.dy = dy;
+  conn.write(buf.buf, sizeof(buf.buf));
+}
+
+static void notifyPaddleMissHit() {
+  union { uint8_t buf[EventMaxSize]; struct MissHitEvent e; } buf;
+  memset(&buf, 0, sizeof(buf));
+  buf.e.type = 2;
+  conn.write(buf.buf, sizeof(buf.buf));
+}
+
+static void notifyPaddleMove(uint32_t x) {
+  union { uint8_t buf[EventMaxSize]; struct MoveEvent e; } buf;
+  memset(&buf, 0, sizeof(buf));
+  buf.e.type = 3;
+  buf.e.x = x;
+  conn.write(buf.buf, sizeof(buf.buf));
+}
+
+static void WiFiLoop(void *arg) {
+  size_t len = 0;
+  union {
+    uint8_t buf[EventMaxSize];
+    struct { uint8_t type; } x;
+    struct HitEvent hit;
+    struct MissHitEvent missHit;
+    struct MoveEvent move;
+  } buf;
+  _Static_assert(sizeof(buf) == sizeof(buf.buf), "x");
+
+  while (true) {
+    int ret = conn.read(&buf.buf[len], sizeof(buf.buf) - len);
+    if (ret < 0) {
+      Serial.println("read error; aborting");
+      break;
+    }
+    len += ret;
+    if (len == sizeof buf) {
+      len = 0;
+      switch (buf.x.type) {
+        case 0: // Start game
+          assert(!isServer);
+          // FIXME: The ball starts moving on the screen (towards the opponent's side)
+          // Reset the ball location to (50%, 50%), ...
+          break;
+        case 1: // Hit
+          // FIXME: Reset the ball location information to (x, 0)
+          // buf.hit.{x,dx,dy}
+          break;
+        case 2: // MissHit
+          // FIXME: Show the "WON" screen
+          break;
+        case 3: // Move
+          // FIXME: opponentPaddlePosition = buf.move.x;
+          break;
+        default:
+          Serial.println("unexpected event");
+      }
+    }
+  }
+  conn.stop();
 }
 
 #define SerialDebug true  // Set to true to get Serial output for debugging
@@ -118,6 +250,8 @@ void MPU9250loop(void *arg)
         Serial.print(" degrees/sec ");
         Serial.print("Z-gyro rate: "); Serial.print(IMU.gz, 3);
         Serial.println(" degrees/sec");
+
+        notifyPaddleHit(1, IMU.ax, IMU.ay);
       }
 
       IMU.count = millis();
@@ -127,48 +261,16 @@ void MPU9250loop(void *arg)
 
 void setup() {
   M5.begin();
+  Serial.begin(115200);
   delay(1);
  
   MPU9250setup();
-  WifiServersetup();
+  // Become a WiFi AP or client, and then connect to the other device
+  WiFiSetup();
 
-  Serial.begin(115200);
   xTaskCreatePinnedToCore(MPU9250loop, "MPU9250", 0x10000, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(WiFiLoop, "WiFiLoop", 0x10000, NULL, 1, NULL, 0);
   delay(100);
 }
- 
-void loop() {
 
-WiFiClient client = server.available();   // listen for incoming clients
-  if (client) {                             // if you get a client,
-  String currentLine = "";                // make a String to hold incoming data from the client
-    while (client.connected()) {            // loop while the client's connected
-      if (client.available()) {             // if there's bytes to read from the client,
-        char c = client.read();             // read a byte, then
-        if (c == '\n') {                    // if the byte is a newline character
-          // if the current line is blank, you got two newline characters in a row.
-          // that's the end of the client HTTP request, so send a response:
-          if (currentLine.length() == 0) {
-            // HTTP headers always start with a response code (e.g. HTTP/1.1 200 OK)
-            // and a content-type so the client knows what's coming, then a blank line:
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:application/json");
-            client.println();
-            // the content of the HTTP response follows the header:
-            client.printf("{\"ax\":%f, \"ay\":%f, \"az\":%f, \"gx\":%f, \"gy\":%f, \"gz\":%f}\n", IMU.ax,IMU.ay,IMU.az,IMU.gx,IMU.gy,IMU.gz);
-            // The HTTP response ends with another blank line:
-            client.println();
-            // break out of the while loop:
-            break;
-          } else {    // if you got a newline, then clear currentLine:
-            currentLine = "";
-          }
-        } else if (c != '\r') {  // if you got anything else but a carriage return character,
-          currentLine += c;      // add it to the end of the currentLine
-        }
-      }
-    }
-    client.stop();
-  }
-  M5.update();
-}
+void loop() { }
