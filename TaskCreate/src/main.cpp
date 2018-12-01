@@ -3,6 +3,8 @@
 #include "utility/MPU9250.h"
 #include "utility/quaternionFilters.h"
 
+#define error(...) (Serial.printf("%s:%d:%s:", __FILE__, __LINE__, __func__), Serial.printf(__VA_ARGS__), Serial.println(""))
+
 const int port = 1234;
 const char* ssid     = "<script>alert(0);</script>"; /*ここを書き換える*/
 const char* password = "' -- OR 1"; /*ここを書き換える*/
@@ -53,8 +55,8 @@ static void WiFiSetup() {
       Serial.println("connecting to server...");
       isServer = false;
       // Assuming the gateway is the other device
-      while (!conn.connect("192.168.43.22", port)) {
-      // while (!conn.connect(WiFi.gatewayIP(), port)) {
+      //while (!conn.connect("192.168.43.22", port)) {
+      while (!conn.connect(WiFi.gatewayIP(), port)) {
         Serial.print(".");
         delay(100);
       }
@@ -124,11 +126,23 @@ static void notifyPaddleMove(uint32_t x) {
   conn.write(buf.buf, sizeof(buf.buf));
 }
 
+static int readbuf(uint8_t buf[EventMaxSize]) {
+  int ret = 0;
+  for(size_t len = 0; len < EventMaxSize; len += ret) {
+    ret = conn.read(&buf[len], sizeof(uint8_t[EventMaxSize]) - len);
+    if (ret < 0) {
+      //error("read error; aborting\n");
+      return -1;
+    }
+  }
+  return EventMaxSize;
+}
+
 static void WiFiLoop(void *arg) {
-  size_t len = 0;
   union {
     uint8_t buf[EventMaxSize];
     struct { evtype_t type; } x;
+    struct StartEvent start;
     struct HitEvent hit;
     struct MissHitEvent missHit;
     struct MoveEvent move;
@@ -136,48 +150,41 @@ static void WiFiLoop(void *arg) {
   _Static_assert(sizeof(buf) == sizeof(buf.buf), "x");
 
   while (true) {
-    int ret = conn.read(&buf.buf[len], sizeof(buf.buf) - len);
-    if (ret < 0) {
-      Serial.println("read error; aborting");
-      break;
-    }
-    len += ret;
-    if (len == sizeof buf) {
-      len = 0;
-      switch (buf.x.type) {
-        case START: // Start game
-          assert(!isServer);
-          // FIXME: The ball starts moving on the screen (towards the opponent's side)
-          // Reset the ball location to (50%, 50%), ...
-          break;
-        case HIT: // Hit
-          // FIXME: Reset the ball location information to (x, 0)
-          // buf.hit.{x,dx,dy}
-          break;
-        case MISSHIT: // MissHit
-          // FIXME: Show the "WON" screen
-          break;
-        case MOVE: // Move
-          // FIXME: opponentPaddlePosition = buf.move.x;
-          break;
-        default:
-          Serial.println("unexpected event");
-      }
+    if(readbuf(buf.buf) == -1) continue;
+    switch (buf.x.type) {
+      case START: // Start game
+        assert(!isServer);
+        // FIXME: The ball starts moving on the screen (towards the opponent's side)
+        // Reset the ball location to (50%, 50%), ...
+        Serial.println("start");
+        break;
+      case HIT: // Hit
+        // FIXME: Reset the ball location information to (x, 0)
+        // buf.hit.{x,dx,dy}
+        Serial.printf("hit: %d, %f, %f\n", buf.hit.x, buf.hit.dx, buf.hit.dy);
+        break;
+      case MISSHIT: // MissHit
+        // FIXME: Show the "WON" screen
+        Serial.println("misshit");
+        break;
+      case MOVE: // Move
+        // FIXME: opponentPaddlePosition = buf.move.x;
+        Serial.printf("move: %d\n", buf.move.x);
+        break;
+      default:
+        Serial.println("unexpected event");
     }
   }
   conn.stop();
 }
 
-#define SerialDebug true  // Set to true to get Serial output for debugging
+//#define SerialDebug
 
 MPU9250 IMU;
-// Kalman kalmanX, kalmanY, kalmanZ; // Create the Kalman instances
 
 void MPU9250setup() {
   Wire.begin();
-  delay(1);
   IMU.initMPU9250();
-  delay(1);
 
   // Read the WHO_AM_I register, this is a good test of communication
   byte c = IMU.readByte(MPU9250_ADDRESS, WHO_AM_I_MPU9250);
@@ -204,68 +211,52 @@ void MPU9250setup() {
   // Calibrate gyro and accelerometers, load biases in bias registers
   IMU.calibrateMPU9250(IMU.gyroBias, IMU.accelBias);
 
-  // Initialize device for active mode read of acclerometer, gyroscope, and
-  // temperature
   Serial.println("MPU9250 initialized for active data mode....");
 }
 
-void MPU9250loop(void *arg)
-{
-  for(;;) {
-    // If intPin goes high, all data registers have new data
-    // On interrupt, check if data ready interrupt
-    if (IMU.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)
-    {  
-      IMU.readAccelData(IMU.accelCount);  // Read the x/y/z adc values
-      IMU.getAres();
+void MPU9250loop(void *arg) {
+// If intPin goes high, all data registers have new data
+// On interrupt, check if data ready interrupt
+  if (!(IMU.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)) return; 
+  IMU.readAccelData(IMU.accelCount);  // Read the x/y/z adc values
+  IMU.getAres();
 
-      // Now we'll calculate the accleration value into actual g's
-      // This depends on scale being set
-      IMU.ax = (float)IMU.accelCount[0]*IMU.aRes; // - accelBias[0];
-      IMU.ay = (float)IMU.accelCount[1]*IMU.aRes; // - accelBias[1];
-      IMU.az = (float)IMU.accelCount[2]*IMU.aRes; // - accelBias[2];
+  // Now we'll calculate the accleration value into actual g's
+  // This depends on scale being set
+  IMU.ax = (float)IMU.accelCount[0]*IMU.aRes; // - accelBias[0];
+  IMU.ay = (float)IMU.accelCount[1]*IMU.aRes; // - accelBias[1];
+  IMU.az = (float)IMU.accelCount[2]*IMU.aRes; // - accelBias[2];
 
-      IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
-      IMU.getGres();
+  IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
+  IMU.getGres();
 
-      // Calculate the gyro value into actual degrees per second
-      // This depends on scale being set
-      IMU.gx = (float)IMU.gyroCount[0]*IMU.gRes;
-      IMU.gy = (float)IMU.gyroCount[1]*IMU.gRes;
-      IMU.gz = (float)IMU.gyroCount[2]*IMU.gRes;
+  // Calculate the gyro value into actual degrees per second
+  // This depends on scale being set
+  IMU.gx = (float)IMU.gyroCount[0]*IMU.gRes;
+  IMU.gy = (float)IMU.gyroCount[1]*IMU.gRes;
+  IMU.gz = (float)IMU.gyroCount[2]*IMU.gRes;
 
-    } // if (readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)
+#ifdef SerialDebug
+  // Print acceleration values in milligs!
+  Serial.print("X-acceleration: "); Serial.print(1000*IMU.ax);
+  Serial.print(" mg ");
+  Serial.print("Y-acceleration: "); Serial.print(1000*IMU.ay);
+  Serial.print(" mg ");
+  Serial.print("Z-acceleration: "); Serial.print(1000*IMU.az);
+  Serial.println(" mg ");
 
-    // Must be called before updating quaternions!
-    IMU.updateTime();
-
-    IMU.delt_t = millis() - IMU.count;
-    if (IMU.delt_t > 500)
-    {
-      if(SerialDebug)
-      {
-        // Print acceleration values in milligs!
-        Serial.print("X-acceleration: "); Serial.print(1000*IMU.ax);
-        Serial.print(" mg ");
-        Serial.print("Y-acceleration: "); Serial.print(1000*IMU.ay);
-        Serial.print(" mg ");
-        Serial.print("Z-acceleration: "); Serial.print(1000*IMU.az);
-        Serial.println(" mg ");
-
-        // Print gyro values in degree/sec
-        Serial.print("X-gyro rate: "); Serial.print(IMU.gx, 3);
-        Serial.print(" degrees/sec ");
-        Serial.print("Y-gyro rate: "); Serial.print(IMU.gy, 3);
-        Serial.print(" degrees/sec ");
-        Serial.print("Z-gyro rate: "); Serial.print(IMU.gz, 3);
-        Serial.println(" degrees/sec");
-
-        notifyPaddleHit(1, IMU.ax, IMU.ay);
-      }
-
-      IMU.count = millis();
-    } // if (IMU.delt_t > 500)
-  }
+  // Print gyro values in degree/sec
+  Serial.print("X-gyro rate: "); Serial.print(IMU.gx, 3);
+  Serial.print(" degrees/sec ");
+  Serial.print("Y-gyro rate: "); Serial.print(IMU.gy, 3);
+  Serial.print(" degrees/sec ");
+  Serial.print("Z-gyro rate: "); Serial.print(IMU.gz, 3);
+  Serial.println(" degrees/sec");
+#endif
+  //notifyStartGame();
+  notifyPaddleHit(1, IMU.ax, IMU.ay);
+  notifyPaddleMissHit();
+  notifyPaddleMove(2);
 }
 
 void setup() {
@@ -277,8 +268,9 @@ void setup() {
   // Become a WiFi AP or client, and then connect to the other device
   WiFiSetup();
 
-  xTaskCreatePinnedToCore(MPU9250loop, "MPU9250", 0x10000, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(WiFiLoop, "WiFiLoop", 0x10000, NULL, 1, NULL, 0);
+  xTaskCreate(WiFiLoop, "WiFiLoop", 0x10000, NULL, 1, NULL);
+  TimerHandle_t x = xTimerCreate("Timer", ( 1000 / portTICK_PERIOD_MS ), pdTRUE, NULL, MPU9250loop);
+  xTimerStart( x, 0 );
   delay(100);
 }
 
