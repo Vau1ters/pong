@@ -3,17 +3,18 @@
 #include "utility/MPU9250.h"
 #include "utility/quaternionFilters.h"
 
+const int port = 1234;
 const char* ssid     = "<script>alert(0);</script>"; /*ここを書き換える*/
 const char* password = "' -- OR 1"; /*ここを書き換える*/
-const int port = 1234;
+
 boolean isServer;
 WiFiClient conn;
 
-#if 1
+ #if 1
 #define ssid "nya"
 #define password "nyannyan"
 #endif
- 
+
 static void WiFiSetup() {
   M5.Lcd.println("press btn A or B");
   while (true) {
@@ -76,24 +77,32 @@ static void WiFiSetup() {
 //     * (none)
 //  2. The other device moved the paddle
 //     * x
-struct StartEvent { uint8_t type; };
-struct HitEvent { uint8_t type; uint32_t x; float dx, dy; };
-struct MissHitEvent { uint8_t type; };
-struct MoveEvent { uint8_t type; uint32_t x; };
+typedef enum {
+  START,
+  HIT,
+  MISSHIT,
+  MOVE,
+  EVENT_NUM
+} evtype_t;
+
+struct StartEvent { evtype_t type; };
+struct HitEvent { evtype_t type; uint32_t x; float dx, dy; };
+struct MissHitEvent { evtype_t type; };
+struct MoveEvent { evtype_t type; uint32_t x; };
 #define EventMaxSize 16
 
 static void notifyStartGame() {
   assert(isServer);
   union { uint8_t buf[EventMaxSize]; struct StartEvent e; } buf;
   memset(&buf, 0, sizeof(buf));
-  buf.e.type = 0;
+  buf.e.type = START;
   conn.write(buf.buf, sizeof(buf.buf));
 }
 
 static void notifyPaddleHit(uint32_t x, float dx, float dy) {
   union { uint8_t buf[EventMaxSize]; struct HitEvent e; } buf;
   memset(&buf, 0, sizeof(buf));
-  buf.e.type = 1;
+  buf.e.type = HIT;
   buf.e.x = x;
   buf.e.dx = dx;
   buf.e.dy = dy;
@@ -103,14 +112,14 @@ static void notifyPaddleHit(uint32_t x, float dx, float dy) {
 static void notifyPaddleMissHit() {
   union { uint8_t buf[EventMaxSize]; struct MissHitEvent e; } buf;
   memset(&buf, 0, sizeof(buf));
-  buf.e.type = 2;
+  buf.e.type = MISSHIT;
   conn.write(buf.buf, sizeof(buf.buf));
 }
 
 static void notifyPaddleMove(uint32_t x) {
   union { uint8_t buf[EventMaxSize]; struct MoveEvent e; } buf;
   memset(&buf, 0, sizeof(buf));
-  buf.e.type = 3;
+  buf.e.type = MOVE;
   buf.e.x = x;
   conn.write(buf.buf, sizeof(buf.buf));
 }
@@ -119,7 +128,7 @@ static void WiFiLoop(void *arg) {
   size_t len = 0;
   union {
     uint8_t buf[EventMaxSize];
-    struct { uint8_t type; } x;
+    struct { evtype_t type; } x;
     struct HitEvent hit;
     struct MissHitEvent missHit;
     struct MoveEvent move;
@@ -136,19 +145,19 @@ static void WiFiLoop(void *arg) {
     if (len == sizeof buf) {
       len = 0;
       switch (buf.x.type) {
-        case 0: // Start game
+        case START: // Start game
           assert(!isServer);
           // FIXME: The ball starts moving on the screen (towards the opponent's side)
           // Reset the ball location to (50%, 50%), ...
           break;
-        case 1: // Hit
+        case HIT: // Hit
           // FIXME: Reset the ball location information to (x, 0)
           // buf.hit.{x,dx,dy}
           break;
-        case 2: // MissHit
+        case MISSHIT: // MissHit
           // FIXME: Show the "WON" screen
           break;
-        case 3: // Move
+        case MOVE: // Move
           // FIXME: opponentPaddlePosition = buf.move.x;
           break;
         default:
