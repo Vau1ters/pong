@@ -31,6 +31,8 @@ bool bufFlag = false;
 // game object
 GameObject ball, paddle[2];
 
+int score[2];
+
 // prototype declaration
 void clean(bool buf);
 void drawBall(int x, int y);
@@ -41,6 +43,7 @@ void gameLoop();
 void swapBuffer();
 GameObject collideWall(GameObject object);
 bool aabb(GameObject o1, GameObject o2);
+void resetGame();
 
 void setup() {
     M5.begin();
@@ -56,36 +59,90 @@ void gameInit(){
     for(int i = 0; i < 2; i++){
         clean((bool)i);
     }
-    paddle[0].x = paddle[1].x = 95;
-    paddle[0].y = 5;
-    paddle[1].y = 310;
     paddle[0].width = paddle[1].width = PADDLE_WIDTH;
     paddle[0].height = paddle[1].height = PADDLE_HEIGHT;
 
-    ball.x = ball.y = 50;
-    ball.vx = ball.vy = 1;
     ball.width = ball.height = BALL_RADIUS * 2;
+    resetGame();
+
+    score[0] = score[1] = 0;
+}
+
+// 相手が跳ね返したボールの状態を設定するときに呼ぶ
+void setBallState(int x, int y, int vx, int vy){
+    ball.x = x;
+    ball.y = y;
+    ball.vx = vx;
+    ball.vy = vy;
+}
+
+// 相手のパドルの位置を指定するときにこれを呼ぶ
+void setOtherPaddleState(int x){
+    int dir = x - paddle[1].x;
+    if(dir < 0){
+        paddle[1].vx = -2;
+    }else if(dir > 0){
+        paddle[1].vx = 2;
+    }else{
+        paddle[1].vx = 0;
+    }
+    paddle[1].x = x;
+}
+
+// 相手のゴールに入ったときにこれを呼ぶ
+void winTheGame(){
+    score[0]++;
+    resetGame();
+}
+
+// 加速度センサーの値を取得
+void setAccelX(int x){
+    paddle[0].x = x;
+}
+
+void resetGame(){
+    ball.x = 50;
+    ball.y = 160;
+    paddle[0].x = paddle[1].x = 95;
+    paddle[0].y = 305;
+    paddle[1].y = 5;
+    ball.vx = ball.vy = 2;
 }
 
 void gameLoop(){
     // update
     // move paddle0
-    if(M5.BtnC.isPressed())paddle[1].x--;
-    if(M5.BtnA.isPressed())paddle[1].x++;
+    if(M5.BtnC.isPressed())paddle[0].x-=2;
+    if(M5.BtnA.isPressed())paddle[0].x+=2;
+
     // move paddle1
+    paddle[1].x += paddle[1].vx;
+    paddle[1].y += paddle[1].vy;
+
     // move ball
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
     // collision
     // paddle and ball
-    if(aabb(paddle[1], ball)){
-        ball.vy = -1;
+    for(int i = 0; i < 2; i++){
+        if (aabb(paddle[i], ball)){
+            ball.vy = 2 * ((i == 0) ? -1 : 1);
+            ball.vx = -((paddle[i].x + paddle[i].width / 2) - (ball.x + ball.width / 2)) / 10;
+        }
     }
+
     // wall
     ball = collideWall(ball);
     for(int i = 0; i < 2; i++){
         paddle[i] = collideWall(paddle[i]);
     }
-    ball.x += ball.vx;
-    ball.y += ball.vy;
+
+    // goal judge
+    if(ball.y > 305){
+        score[1]++;
+        resetGame();
+    }
 
     // draw
     clean(bufFlag);
@@ -94,6 +151,8 @@ void gameLoop(){
         drawPaddle(paddle[i].x, paddle[i].y);
     }
     flush();
+    M5.Lcd.setCursor(0, 0);
+    M5.Lcd.printf("%d, %d", score[0], score[1]);
     swapBuffer();
 }
 
