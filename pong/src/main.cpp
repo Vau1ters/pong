@@ -8,6 +8,7 @@ void setOtherPaddleState(int);
 
 
 boolean isServer;
+boolean isStartPlayer;
 WiFiClient conn;
 
 #if 1
@@ -105,6 +106,7 @@ static void notifyStartGame() {
   memset(&buf, 0, sizeof(buf));
   buf.e.type = START;
   conn.write(buf.buf, sizeof(buf.buf));
+  isStartPlayer = true;
 }
 
 static void notifyPaddleHit(uint32_t x, float dx, float dy) {
@@ -162,6 +164,7 @@ static void WiFiLoop(void *arg) {
         // FIXME: The ball starts moving on the screen (towards the opponent's side)
         // Reset the ball location to (50%, 50%), ...
         Serial.println("start");
+        isStartPlayer = false;
         break;
       case HIT: // Hit
         // FIXME: Reset the ball location information to (x, 0)
@@ -293,10 +296,12 @@ void setup() {
     // Become a WiFi AP or client, and then connect to the other device
     WiFiSetup();
 
+    if(isServer) isStartPlayer = true;
+
     gameInit();
 
     xTaskCreate(WiFiLoop, "WiFiLoop", 0x10000, NULL, 1, NULL);
-    TimerHandle_t x = xTimerCreate("Timer", ( 160 / portTICK_PERIOD_MS ), pdTRUE, NULL, gameLoop);
+    TimerHandle_t x = xTimerCreate("Timer", ( 600 / portTICK_PERIOD_MS ), pdTRUE, NULL, gameLoop);
     xTimerStart( x, 0 );
 
 }
@@ -329,7 +334,10 @@ void setBallState(int x, int y, int vx, int vy){
 
 // 相手のパドルの位置を指定するときにこれを呼ぶ
 void setOtherPaddleState(int x){
-    int dir = x - paddle[1].x;
+    int new_x = SCREEN_WIDTH - PADDLE_WIDTH - x;
+    int dir = new_x - paddle[1].x;
+    Serial.printf("x = %d, new_x = %d, paddlex = %d", x, new_x, paddle[1].x);
+
     if(dir < 0){
         paddle[1].vx = -2;
     }else if(dir > 0){
@@ -337,7 +345,7 @@ void setOtherPaddleState(int x){
     }else{
         paddle[1].vx = 0;
     }
-    paddle[1].x = x;
+    paddle[1].x = new_x;
 }
 
 // 相手のゴールに入ったときにこれを呼ぶ
@@ -352,12 +360,12 @@ void setAccelX(int x){
 }
 
 void resetGame(){
-    ball.x = 50;
+    ball.x = 115;
     ball.y = 160;
     paddle[0].x = paddle[1].x = 95;
     paddle[0].y = 305;
     paddle[1].y = 5;
-    ball.vx = ball.vy = 2;
+    ball.vx = ball.vy = (isStartPlayer?1:-1) * 2;
 }
 
 void gameLoop(void *arg){
@@ -408,12 +416,6 @@ void gameLoop(void *arg){
     swapBuffer();
 
     M5.update();
-
-    //debug
-    //notifyStartGame();
-    //notifyPaddleHit(1, IMU.ax, IMU.ay);
-    //notifyPaddleMissHit();
-    //notifyPaddleMove(2);
 }
 
 bool aabb(GameObject o1, GameObject o2){
