@@ -360,10 +360,10 @@ void setAccelX(int x){
 }
 
 void resetGame(){
-    ball.x = 115;
-    ball.y = 160;
+    ball.x = 110;
+    ball.y = 150;
     paddle[0].x = paddle[1].x = 95;
-    paddle[0].y = 305;
+    paddle[0].y = 310;
     paddle[1].y = 5;
     ball.vx = ball.vy = (isStartPlayer?1:-1) * 2;
 }
