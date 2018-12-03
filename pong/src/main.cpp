@@ -326,10 +326,10 @@ void gameInit(){
 
 // 相手が跳ね返したボールの状態を設定するときに呼ぶ
 void setBallState(int x, int y, int vx, int vy){
-    ball.x = x;
-    ball.y = y;
-    ball.vx = vx;
-    ball.vy = vy;
+    ball.x = SCREEN_WIDTH - BALL_RADIUS * 2 - x;
+    ball.y = SCREEN_HEIGHT - BALL_RADIUS * 2 - y;
+    ball.vx = -vx;
+    ball.vy = -vy;
 }
 
 // 相手のパドルの位置を指定するときにこれを呼ぶ
