@@ -5,6 +5,7 @@
 
 //prototype
 void setOtherPaddleState(int);
+void setBallState(int, int, int, int);
 
 
 boolean isServer;
@@ -96,7 +97,7 @@ typedef enum {
 } evtype_t;
 
 struct StartEvent { evtype_t type; };
-struct HitEvent { evtype_t type; uint32_t x; float dx, dy; };
+struct HitEvent { evtype_t type; uint16_t x, y; float dx, dy; };
 struct MissHitEvent { evtype_t type; };
 struct MoveEvent { evtype_t type; uint32_t x; };
 #define EventMaxSize 16
@@ -109,11 +110,12 @@ static void notifyStartGame() {
   isStartPlayer = true;
 }
 
-static void notifyPaddleHit(uint32_t x, float dx, float dy) {
+static void notifyPaddleHit(uint16_t x, uint16_t y, float dx, float dy) {
   union { uint8_t buf[EventMaxSize]; struct HitEvent e; } buf;
   memset(&buf, 0, sizeof(buf));
   buf.e.type = HIT;
   buf.e.x = x;
+  buf.e.y = y;
   buf.e.dx = dx;
   buf.e.dy = dy;
   conn.write(buf.buf, sizeof(buf.buf));
@@ -169,7 +171,8 @@ static void WiFiLoop(void *arg) {
       case HIT: // Hit
         // FIXME: Reset the ball location information to (x, 0)
         // buf.hit.{x,dx,dy}
-        Serial.printf("hit: %d, %f, %f\n", buf.hit.x, buf.hit.dx, buf.hit.dy);
+        Serial.printf("hit: %d, %d, %f, %f\n", buf.hit.x, buf.hit.y, buf.hit.dx, buf.hit.dy);
+        setBallState(buf.hit.x, buf.hit.y, buf.hit.dx, buf.hit.dy);
         break;
       case MISSHIT: // MissHit
         // FIXME: Show the "WON" screen
@@ -301,7 +304,7 @@ void setup() {
     gameInit();
 
     xTaskCreate(WiFiLoop, "WiFiLoop", 0x10000, NULL, 1, NULL);
-    TimerHandle_t x = xTimerCreate("Timer", ( 600 / portTICK_PERIOD_MS ), pdTRUE, NULL, gameLoop);
+    TimerHandle_t x = xTimerCreate("Timer", ( 16 / portTICK_PERIOD_MS ), pdTRUE, NULL, gameLoop);
     xTimerStart( x, 0 );
 
 }
@@ -336,7 +339,6 @@ void setBallState(int x, int y, int vx, int vy){
 void setOtherPaddleState(int x){
     int new_x = SCREEN_WIDTH - PADDLE_WIDTH - x;
     int dir = new_x - paddle[1].x;
-    Serial.printf("x = %d, new_x = %d, paddlex = %d", x, new_x, paddle[1].x);
 
     if(dir < 0){
         paddle[1].vx = -2;
@@ -389,6 +391,7 @@ void gameLoop(void *arg){
         if (aabb(paddle[i], ball)){
             ball.vy = 2 * ((i == 0) ? -1 : 1);
             ball.vx = -((paddle[i].x + paddle[i].width / 2) - (ball.x + ball.width / 2)) / 10;
+            if(i == 0) notifyPaddleHit(ball.x, ball.y, ball.vx, ball.vy);
         }
     }
 
