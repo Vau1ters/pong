@@ -6,6 +6,7 @@
 //prototype
 void setOtherPaddleState(int);
 void setBallState(int, int, int, int);
+void winTheGame();
 
 
 boolean isServer;
@@ -177,6 +178,7 @@ static void WiFiLoop(void *arg) {
       case MISSHIT: // MissHit
         // FIXME: Show the "WON" screen
         Serial.println("misshit");
+        winTheGame();
         break;
       case MOVE: // Move
         // FIXME: opponentPaddlePosition = buf.move.x;
@@ -304,14 +306,14 @@ void setup() {
     gameInit();
 
     xTaskCreate(WiFiLoop, "WiFiLoop", 0x10000, NULL, 1, NULL);
-    TimerHandle_t x = xTimerCreate("Timer", ( 16 / portTICK_PERIOD_MS ), pdTRUE, NULL, gameLoop);
+    TimerHandle_t x = xTimerCreate("Timer", ( 20 / portTICK_PERIOD_MS ), pdTRUE, NULL, gameLoop);
     xTimerStart( x, 0 );
 
 }
 
 void loop() {
     //gameLoop();
-    M5.update();
+    //M5.update();
 }
 
 void gameInit(){
@@ -338,7 +340,7 @@ void setBallState(int x, int y, int vx, int vy){
 // 相手のパドルの位置を指定するときにこれを呼ぶ
 void setOtherPaddleState(int x){
     int new_x = SCREEN_WIDTH - PADDLE_WIDTH - x;
-    int dir = new_x - paddle[1].x;
+/*    int dir = new_x - paddle[1].x;
 
     if(dir < 0){
         paddle[1].vx = -2;
@@ -346,7 +348,7 @@ void setOtherPaddleState(int x){
         paddle[1].vx = 2;
     }else{
         paddle[1].vx = 0;
-    }
+    }*/
     paddle[1].x = new_x;
 }
 
@@ -370,12 +372,14 @@ void resetGame(){
     ball.vx = ball.vy = (isStartPlayer?1:-1) * 2;
 }
 
+int cnt = 0;
 void gameLoop(void *arg){
+    M5.update();
     // update
     // move paddle0
     if(M5.BtnC.isPressed())paddle[0].x-=2;
     if(M5.BtnA.isPressed())paddle[0].x+=2;
-    notifyPaddleMove(paddle[0].x);
+    if((cnt++ % 10) == 0 && (M5.BtnC.isPressed() || M5.BtnA.isPressed()))  notifyPaddleMove(paddle[0].x);
 
     // move paddle1
     paddle[1].x += paddle[1].vx;
@@ -404,6 +408,7 @@ void gameLoop(void *arg){
     // goal judge
     if(ball.y > 305){
         score[1]++;
+        notifyPaddleMissHit();
         resetGame();
     }
 
@@ -418,7 +423,6 @@ void gameLoop(void *arg){
     M5.Lcd.printf("%d, %d", score[0], score[1]);
     swapBuffer();
 
-    M5.update();
 }
 
 bool aabb(GameObject o1, GameObject o2){
