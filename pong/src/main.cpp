@@ -225,27 +225,77 @@ void MPU9250setup() {
   IMU.calibrateMPU9250(IMU.gyroBias, IMU.accelBias);
 
   Serial.println("MPU9250 initialized for active data mode....");
+
+  // Read the WHO_AM_I register of the magnetometer, this is a good test of
+  // communication
+  byte d = IMU.readByte(AK8963_ADDRESS, WHO_AM_I_AK8963);
+  Serial.print("AK8963 "); Serial.print("I AM "); Serial.print(d, HEX);
+  Serial.print(" I should be "); Serial.println(0x48, HEX);
+
+  // Get magnetometer calibration from AK8963 ROM
+  IMU.initAK8963(IMU.magCalibration);
+  // Initialize device for active mode read of magnetometer
+  Serial.println("AK8963 initialized for active data mode....");
+  //  Serial.println("Calibration values: ");
+  Serial.print("X-Axis sensitivity adjustment value ");
+  Serial.println(IMU.magCalibration[0], 2);
+  Serial.print("Y-Axis sensitivity adjustment value ");
+  Serial.println(IMU.magCalibration[1], 2);
+  Serial.print("Z-Axis sensitivity adjustment value ");
+  Serial.println(IMU.magCalibration[2], 2);
 }
 
-void getSensorValue(void *arg) {
-  if (!(IMU.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)) return; 
-  IMU.readAccelData(IMU.accelCount);  // Read the x/y/z adc values
-  IMU.getAres();
-
-  // Now we'll calculate the accleration value into actual g's
-  // This depends on scale being set
-  IMU.ax = (float)IMU.accelCount[0]*IMU.aRes; // - accelBias[0];
-  IMU.ay = (float)IMU.accelCount[1]*IMU.aRes; // - accelBias[1];
-  IMU.az = (float)IMU.accelCount[2]*IMU.aRes; // - accelBias[2];
-
-  IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
-  IMU.getGres();
-
-  // Calculate the gyro value into actual degrees per second
-  // This depends on scale being set
-  IMU.gx = (float)IMU.gyroCount[0]*IMU.gRes;
-  IMU.gy = (float)IMU.gyroCount[1]*IMU.gRes;
-  IMU.gz = (float)IMU.gyroCount[2]*IMU.gRes; 
+void getSensorValue() {
+  if (IMU.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01) {
+    IMU.readAccelData(IMU.accelCount);  // Read the x/y/z adc values
+    IMU.getAres();
+    // Now we'll calculate the accleration value into actual g's
+    // This depends on scale being set
+    IMU.ax = (float)IMU.accelCount[0]*IMU.aRes; // - accelBias[0];
+    IMU.ay = (float)IMU.accelCount[1]*IMU.aRes; // - accelBias[1];
+    IMU.az = (float)IMU.accelCount[2]*IMU.aRes; // - accelBias[2];
+    IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
+    IMU.getGres();
+    // Calculate the gyro value into actual degrees per second
+    // This depends on scale being set
+    IMU.gx = (float)IMU.gyroCount[0]*IMU.gRes;
+    IMU.gy = (float)IMU.gyroCount[1]*IMU.gRes;
+    IMU.gz = (float)IMU.gyroCount[2]*IMU.gRes;
+    IMU.readMagData(IMU.magCount);  // Read the x/y/z adc values
+    IMU.getMres();
+    // User environmental x-axis correction in milliGauss, should be
+    // automatically calculated
+    IMU.magbias[0] = +470.;
+    // User environmental x-axis correction in milliGauss TODO axis??
+    IMU.magbias[1] = +120.;
+    // User environmental x-axis correction in milliGauss
+    IMU.magbias[2] = +125.;
+    // Calculate the magnetometer values in milliGauss
+    // Include factory calibration per data sheet and user environmental
+    // corrections
+    // Get actual magnetometer value, this depends on scale being set
+    IMU.mx = (float)IMU.magCount[0]*IMU.mRes*IMU.magCalibration[0] -
+               IMU.magbias[0];
+    IMU.my = (float)IMU.magCount[1]*IMU.mRes*IMU.magCalibration[1] -
+               IMU.magbias[1];
+    IMU.mz = (float)IMU.magCount[2]*IMU.mRes*IMU.magCalibration[2] -
+               IMU.magbias[2];
+  }
+  IMU.updateTime();
+  MahonyQuaternionUpdate(IMU.ax, IMU.ay, IMU.az, IMU.gx*DEG_TO_RAD,
+                 IMU.gy*DEG_TO_RAD, IMU.gz*DEG_TO_RAD, IMU.mx,
+                 IMU.my, IMU.mz, IMU.deltat);
+  IMU.delt_t = millis() - IMU.count;
+  if (IMU.delt_t > 500)
+      IMU.count = millis();
+  IMU.roll  = (atan2(2.0f * (*getQ() * *(getQ()+1) + *(getQ()+2) *
+                      *(getQ()+3)), *getQ() * *getQ() - *(getQ()+1) * *(getQ()+1)
+                      - *(getQ()+2) * *(getQ()+2) + *(getQ()+3) * *(getQ()+3))) * RAD_TO_DEG;
+  IMU.yaw   = (atan2(2.0f * (*(getQ()+1) * *(getQ()+2) + *getQ() *
+              *(getQ()+3)), *getQ() * *getQ() + *(getQ()+1) * *(getQ()+1)
+              - *(getQ()+2) * *(getQ()+2) - *(getQ()+3) * *(getQ()+3))) * RAD_TO_DEG;
+  IMU.pitch = (-asin(2.0f * (*(getQ()+1) * *(getQ()+3) - *getQ() *
+                *(getQ()+2)))) * RAD_TO_DEG;
 }
 
 // macro for drawing picture
@@ -312,8 +362,7 @@ void setup() {
 }
 
 void loop() {
-    //gameLoop();
-    //M5.update();
+  getSensorValue();
 }
 
 void gameInit(){
@@ -377,9 +426,10 @@ void gameLoop(void *arg){
     M5.update();
     // update
     // move paddle0
-    if(M5.BtnC.isPressed())paddle[0].x-=2;
-    if(M5.BtnA.isPressed())paddle[0].x+=2;
-    if((cnt++ % 10) == 0 && (M5.BtnC.isPressed() || M5.BtnA.isPressed()))  notifyPaddleMove(paddle[0].x);
+    float diff = IMU.roll / 20;
+    paddle[0].x += diff;
+    if((cnt++ % 10) == 0 && diff != 0.0)
+        notifyPaddleMove(paddle[0].x);
 
     // move paddle1
     paddle[1].x += paddle[1].vx;
