@@ -3,44 +3,48 @@
 #include "utility/MPU9250.h"
 #include "utility/quaternionFilters.h"
 
+static const uint16_t portNumber = 1234;
+static const char *wifiSsid = "<script>alert(0);</script>";
+static const char *wifiPassword = "' -- OR 1";
+
 //prototype
 void setOtherPaddleState(int);
 void setBallState(int, int, int, int);
 void winTheGame();
 
-
 boolean isServer;
 boolean isStartPlayer;
-WiFiClient conn;
-
-#if 1
-#define port 1234
-#define ssid "nya"
-#define password "nyannyan"
-#endif
+WiFiUDP udp;
 
 static void startAP() {
   isServer = true;
   Serial.println("btnA pressed; starting WiFi AP");
-  WiFi.softAP(ssid, password);
+  WiFi.softAP(wifiSsid, wifiPassword);
   Serial.print("local IP address: ");
   Serial.println(WiFi.softAPIP());
 
   Serial.println("waiting for client...");
   isServer = true;
-  WiFiServer server(port);
-  server.begin();
-  while (!(conn = server.available())) {
+  udp.begin(portNumber);
+  while (true) {
+    char buf[4];
+    if (udp.parsePacket() &&
+        udp.read(buf, 4) &&
+        !memcmp(buf, "ping", 4)) {
+      udp.beginPacket(udp.remoteIP(), udp.remotePort());
+      udp.write(reinterpret_cast<const uint8_t *>("pong"), 4);
+      udp.endPacket();
+      break;
+    }
     Serial.print(".");
     delay(100);
   }
-  server.end();
   Serial.println("connected");
 }
 
 static void connectAP() {
   Serial.println("btnB pressed; connecting to WiFi AP");
-  WiFi.begin(ssid, password);
+  WiFi.begin(wifiSsid, wifiPassword);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -53,9 +57,17 @@ static void connectAP() {
 
   Serial.println("connecting to server...");
   isServer = false;
-  // Assuming the gateway is the other device
-  //while (!conn.connect("192.168.43.22", port)) {
-  while (!conn.connect(WiFi.gatewayIP(), port)) {
+  udp.begin(portNumber);
+  udp.beginPacket(WiFi.gatewayIP(), portNumber);
+  udp.write(reinterpret_cast<const uint8_t *>("ping"), 4);
+  udp.endPacket();
+  while (true) {
+    char buf[4];
+    if (udp.parsePacket() &&
+        udp.read(buf, 4) == 4 &&
+        !memcmp(buf, "pong", 4)) {
+      break;
+    }
     Serial.print(".");
     delay(100);
   }
@@ -103,49 +115,38 @@ struct MissHitEvent { evtype_t type; };
 struct MoveEvent { evtype_t type; uint32_t x; };
 #define EventMaxSize 16
 
+template<typename T>
+static void sendPacket(const T event) {
+  uint8_t buf[EventMaxSize] = {};
+  memcpy(buf, &event, sizeof(event));
+  // Yucks; Any better way that won't use udp.removeIP()?
+  udp.beginPacket(udp.remoteIP(), portNumber);
+  udp.write(buf, sizeof(buf));
+  udp.endPacket();
+}
+
 static void notifyStartGame() {
-  union { uint8_t buf[EventMaxSize]; struct StartEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = START;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct StartEvent) { .type = START });
   isStartPlayer = true;
 }
 
 static void notifyPaddleHit(uint16_t x, uint16_t y, float dx, float dy) {
-  union { uint8_t buf[EventMaxSize]; struct HitEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = HIT;
-  buf.e.x = x;
-  buf.e.y = y;
-  buf.e.dx = dx;
-  buf.e.dy = dy;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct HitEvent) { .type = HIT, .x = x, .y = y, .dx = dx, .dy = dy });
 }
 
 static void notifyPaddleMissHit() {
-  union { uint8_t buf[EventMaxSize]; struct MissHitEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = MISSHIT;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct MissHitEvent) { .type = MISSHIT });
 }
 
 static void notifyPaddleMove(uint32_t x) {
-  union { uint8_t buf[EventMaxSize]; struct MoveEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = MOVE;
-  buf.e.x = x;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct MoveEvent) { .type = MOVE, .x = x });
 }
 
 static int readbuf(uint8_t buf[EventMaxSize]) {
-  int ret = 0;
-  for(size_t len = 0; len < EventMaxSize; len += ret) {
-    ret = conn.read(&buf[len], sizeof(uint8_t[EventMaxSize]) - len);
-    if (ret < 0) {
-      //error("read error; aborting\n");
-      return -1;
-    }
-  }
+  if (udp.parsePacket() != EventMaxSize)
+    return -1;
+  if (udp.read(buf, EventMaxSize) != EventMaxSize)
+    return -1;
   return EventMaxSize;
 }
 
@@ -189,7 +190,6 @@ static void WiFiLoop(void *arg) {
         Serial.println("unexpected event");
     }
   }
-  conn.stop();
 }
 
 
