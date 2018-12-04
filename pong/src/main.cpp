@@ -328,9 +328,12 @@ bool bufFlag = false;
 
 // game object
 GameObject ball, paddle[2];
-int otherPaddleX;
 
 int score[2];
+
+int startCount;
+
+int ballSpeedCount;
 
 // prototype declaration
 void clean(bool buf);
@@ -343,6 +346,7 @@ void swapBuffer();
 GameObject collideWall(GameObject object, bool reflect);
 bool aabb(GameObject o1, GameObject o2);
 void resetGame();
+void shootBall();
 
 void setup() {
     M5.begin();
@@ -385,22 +389,13 @@ void setBallState(int x, int y, int vx, int vy){
     ball.y = SCREEN_HEIGHT - BALL_RADIUS * 2 - y;
     ball.vx = -vx;
     ball.vy = -vy;
+    ballSpeedCount++;
 }
 
 // 相手のパドルの位置を指定するときにこれを呼ぶ
 void setOtherPaddleState(int x){
     int new_x = SCREEN_WIDTH - PADDLE_WIDTH - x;
-    int dir = new_x - otherPaddleX;
-
-    if(dir < 0){
-        paddle[1].vx = -2;
-    }else if(dir > 0){
-        paddle[1].vx = 2;
-    }else{
-        paddle[1].vx = 0;
-    }
     paddle[1].x = new_x;
-    otherPaddleX = new_x;
 }
 
 // 相手のゴールに入ったときにこれを呼ぶ
@@ -409,28 +404,43 @@ void winTheGame(){
     resetGame();
 }
 
-// 加速度センサーの値を取得
-void setAccelX(int x){
-    paddle[0].x = x;
-}
-
 void resetGame(){
     ball.x = 110;
     ball.y = 150;
-    otherPaddleX = paddle[0].x = paddle[1].x = 95;
-    paddle[0].y = 310;
-    paddle[1].y = 5;
-    ball.vx = ball.vy = (isStartPlayer?1:-1) * 2;
+    paddle[0].x = paddle[1].x = 95;
+    paddle[0].y = 305;
+    paddle[1].y = 10;
+    startCount = 50;
+    ball.vx = ball.vy = 0;
+    ballSpeedCount = 0;
 }
 
-int cnt = 0;
+void shootBall(){
+    ball.vx = (isStartPlayer?1:-1);
+    ball.vy = (isStartPlayer?1:-1) * 2;
+}
+
+int min(int a, int b){
+    if(a < b)return a;
+    return b;
+}
+
+int updateCount = 0;
 void gameLoop(void *arg){
     M5.update();
     // update
+    // ball shoot count
+    if(startCount > 0){
+        startCount--;
+        if(startCount == 0){
+            shootBall();
+        }
+    }
+
     // move paddle0
     float diff = IMU.roll / 20;
     paddle[0].x += diff;
-    if((cnt++ % 10) == 0 && diff != 0.0)
+    if((updateCount++ % 10) == 0 && diff != 0.0)
         notifyPaddleMove(paddle[0].x);
 
     // move paddle1
@@ -445,9 +455,12 @@ void gameLoop(void *arg){
     // paddle and ball
     for(int i = 0; i < 2; i++){
         if (aabb(paddle[i], ball)){
-            ball.vy = 2 * ((i == 0) ? -1 : 1);
+            ball.vy = ((i == 0) ? -1 : 1) * (2 + min(ballSpeedCount, 32) / 8);
             ball.vx = -((paddle[i].x + paddle[i].width / 2) - (ball.x + ball.width / 2)) / 10;
-            if(i == 0) notifyPaddleHit(ball.x, ball.y, ball.vx, ball.vy);
+            if(i == 0){
+                ballSpeedCount++;
+                notifyPaddleHit(ball.x, ball.y, ball.vx, ball.vy);
+            }
         }
     }
 
