@@ -3,44 +3,48 @@
 #include "utility/MPU9250.h"
 #include "utility/quaternionFilters.h"
 
+static const uint16_t portNumber = 1234;
+static const char *wifiSsid = "<script>alert(0);</script>";
+static const char *wifiPassword = "' -- OR 1";
+
 //prototype
 void setOtherPaddleState(int);
 void setBallState(int, int, int, int);
 void winTheGame();
 
-
 boolean isServer;
 boolean isStartPlayer;
-WiFiClient conn;
-
-#if 1
-#define port 1234
-#define ssid "nya"
-#define password "nyannyan"
-#endif
+WiFiUDP udp;
 
 static void startAP() {
   isServer = true;
   Serial.println("btnA pressed; starting WiFi AP");
-  WiFi.softAP(ssid, password);
+  WiFi.softAP(wifiSsid, wifiPassword);
   Serial.print("local IP address: ");
   Serial.println(WiFi.softAPIP());
 
   Serial.println("waiting for client...");
   isServer = true;
-  WiFiServer server(port);
-  server.begin();
-  while (!(conn = server.available())) {
+  udp.begin(portNumber);
+  while (true) {
+    char buf[4];
+    if (udp.parsePacket() &&
+        udp.read(buf, 4) &&
+        !memcmp(buf, "ping", 4)) {
+      udp.beginPacket(udp.remoteIP(), udp.remotePort());
+      udp.write(reinterpret_cast<const uint8_t *>("pong"), 4);
+      udp.endPacket();
+      break;
+    }
     Serial.print(".");
     delay(100);
   }
-  server.end();
   Serial.println("connected");
 }
 
 static void connectAP() {
   Serial.println("btnB pressed; connecting to WiFi AP");
-  WiFi.begin(ssid, password);
+  WiFi.begin(wifiSsid, wifiPassword);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -53,9 +57,17 @@ static void connectAP() {
 
   Serial.println("connecting to server...");
   isServer = false;
-  // Assuming the gateway is the other device
-  //while (!conn.connect("192.168.43.22", port)) {
-  while (!conn.connect(WiFi.gatewayIP(), port)) {
+  udp.begin(portNumber);
+  udp.beginPacket(WiFi.gatewayIP(), portNumber);
+  udp.write(reinterpret_cast<const uint8_t *>("ping"), 4);
+  udp.endPacket();
+  while (true) {
+    char buf[4];
+    if (udp.parsePacket() &&
+        udp.read(buf, 4) == 4 &&
+        !memcmp(buf, "pong", 4)) {
+      break;
+    }
     Serial.print(".");
     delay(100);
   }
@@ -103,49 +115,38 @@ struct MissHitEvent { evtype_t type; };
 struct MoveEvent { evtype_t type; uint32_t x; };
 #define EventMaxSize 16
 
+template<typename T>
+static void sendPacket(const T event) {
+  uint8_t buf[EventMaxSize] = {};
+  memcpy(buf, &event, sizeof(event));
+  // Yucks; Any better way that won't use udp.removeIP()?
+  udp.beginPacket(udp.remoteIP(), portNumber);
+  udp.write(buf, sizeof(buf));
+  udp.endPacket();
+}
+
 static void notifyStartGame() {
-  union { uint8_t buf[EventMaxSize]; struct StartEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = START;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct StartEvent) { .type = START });
   isStartPlayer = true;
 }
 
 static void notifyPaddleHit(uint16_t x, uint16_t y, float dx, float dy) {
-  union { uint8_t buf[EventMaxSize]; struct HitEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = HIT;
-  buf.e.x = x;
-  buf.e.y = y;
-  buf.e.dx = dx;
-  buf.e.dy = dy;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct HitEvent) { .type = HIT, .x = x, .y = y, .dx = dx, .dy = dy });
 }
 
 static void notifyPaddleMissHit() {
-  union { uint8_t buf[EventMaxSize]; struct MissHitEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = MISSHIT;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct MissHitEvent) { .type = MISSHIT });
 }
 
 static void notifyPaddleMove(uint32_t x) {
-  union { uint8_t buf[EventMaxSize]; struct MoveEvent e; } buf;
-  memset(&buf, 0, sizeof(buf));
-  buf.e.type = MOVE;
-  buf.e.x = x;
-  conn.write(buf.buf, sizeof(buf.buf));
+  sendPacket((struct MoveEvent) { .type = MOVE, .x = x });
 }
 
 static int readbuf(uint8_t buf[EventMaxSize]) {
-  int ret = 0;
-  for(size_t len = 0; len < EventMaxSize; len += ret) {
-    ret = conn.read(&buf[len], sizeof(uint8_t[EventMaxSize]) - len);
-    if (ret < 0) {
-      //error("read error; aborting\n");
-      return -1;
-    }
-  }
+  if (udp.parsePacket() != EventMaxSize)
+    return -1;
+  if (udp.read(buf, EventMaxSize) != EventMaxSize)
+    return -1;
   return EventMaxSize;
 }
 
@@ -189,7 +190,6 @@ static void WiFiLoop(void *arg) {
         Serial.println("unexpected event");
     }
   }
-  conn.stop();
 }
 
 
@@ -225,27 +225,77 @@ void MPU9250setup() {
   IMU.calibrateMPU9250(IMU.gyroBias, IMU.accelBias);
 
   Serial.println("MPU9250 initialized for active data mode....");
+
+  // Read the WHO_AM_I register of the magnetometer, this is a good test of
+  // communication
+  byte d = IMU.readByte(AK8963_ADDRESS, WHO_AM_I_AK8963);
+  Serial.print("AK8963 "); Serial.print("I AM "); Serial.print(d, HEX);
+  Serial.print(" I should be "); Serial.println(0x48, HEX);
+
+  // Get magnetometer calibration from AK8963 ROM
+  IMU.initAK8963(IMU.magCalibration);
+  // Initialize device for active mode read of magnetometer
+  Serial.println("AK8963 initialized for active data mode....");
+  //  Serial.println("Calibration values: ");
+  Serial.print("X-Axis sensitivity adjustment value ");
+  Serial.println(IMU.magCalibration[0], 2);
+  Serial.print("Y-Axis sensitivity adjustment value ");
+  Serial.println(IMU.magCalibration[1], 2);
+  Serial.print("Z-Axis sensitivity adjustment value ");
+  Serial.println(IMU.magCalibration[2], 2);
 }
 
-void getSensorValue(void *arg) {
-  if (!(IMU.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01)) return; 
-  IMU.readAccelData(IMU.accelCount);  // Read the x/y/z adc values
-  IMU.getAres();
-
-  // Now we'll calculate the accleration value into actual g's
-  // This depends on scale being set
-  IMU.ax = (float)IMU.accelCount[0]*IMU.aRes; // - accelBias[0];
-  IMU.ay = (float)IMU.accelCount[1]*IMU.aRes; // - accelBias[1];
-  IMU.az = (float)IMU.accelCount[2]*IMU.aRes; // - accelBias[2];
-
-  IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
-  IMU.getGres();
-
-  // Calculate the gyro value into actual degrees per second
-  // This depends on scale being set
-  IMU.gx = (float)IMU.gyroCount[0]*IMU.gRes;
-  IMU.gy = (float)IMU.gyroCount[1]*IMU.gRes;
-  IMU.gz = (float)IMU.gyroCount[2]*IMU.gRes; 
+void getSensorValue() {
+  if (IMU.readByte(MPU9250_ADDRESS, INT_STATUS) & 0x01) {
+    IMU.readAccelData(IMU.accelCount);  // Read the x/y/z adc values
+    IMU.getAres();
+    // Now we'll calculate the accleration value into actual g's
+    // This depends on scale being set
+    IMU.ax = (float)IMU.accelCount[0]*IMU.aRes; // - accelBias[0];
+    IMU.ay = (float)IMU.accelCount[1]*IMU.aRes; // - accelBias[1];
+    IMU.az = (float)IMU.accelCount[2]*IMU.aRes; // - accelBias[2];
+    IMU.readGyroData(IMU.gyroCount);  // Read the x/y/z adc values
+    IMU.getGres();
+    // Calculate the gyro value into actual degrees per second
+    // This depends on scale being set
+    IMU.gx = (float)IMU.gyroCount[0]*IMU.gRes;
+    IMU.gy = (float)IMU.gyroCount[1]*IMU.gRes;
+    IMU.gz = (float)IMU.gyroCount[2]*IMU.gRes;
+    IMU.readMagData(IMU.magCount);  // Read the x/y/z adc values
+    IMU.getMres();
+    // User environmental x-axis correction in milliGauss, should be
+    // automatically calculated
+    IMU.magbias[0] = +470.;
+    // User environmental x-axis correction in milliGauss TODO axis??
+    IMU.magbias[1] = +120.;
+    // User environmental x-axis correction in milliGauss
+    IMU.magbias[2] = +125.;
+    // Calculate the magnetometer values in milliGauss
+    // Include factory calibration per data sheet and user environmental
+    // corrections
+    // Get actual magnetometer value, this depends on scale being set
+    IMU.mx = (float)IMU.magCount[0]*IMU.mRes*IMU.magCalibration[0] -
+               IMU.magbias[0];
+    IMU.my = (float)IMU.magCount[1]*IMU.mRes*IMU.magCalibration[1] -
+               IMU.magbias[1];
+    IMU.mz = (float)IMU.magCount[2]*IMU.mRes*IMU.magCalibration[2] -
+               IMU.magbias[2];
+  }
+  IMU.updateTime();
+  MahonyQuaternionUpdate(IMU.ax, IMU.ay, IMU.az, IMU.gx*DEG_TO_RAD,
+                 IMU.gy*DEG_TO_RAD, IMU.gz*DEG_TO_RAD, IMU.mx,
+                 IMU.my, IMU.mz, IMU.deltat);
+  IMU.delt_t = millis() - IMU.count;
+  if (IMU.delt_t > 500)
+      IMU.count = millis();
+  IMU.roll  = (atan2(2.0f * (*getQ() * *(getQ()+1) + *(getQ()+2) *
+                      *(getQ()+3)), *getQ() * *getQ() - *(getQ()+1) * *(getQ()+1)
+                      - *(getQ()+2) * *(getQ()+2) + *(getQ()+3) * *(getQ()+3))) * RAD_TO_DEG;
+  IMU.yaw   = (atan2(2.0f * (*(getQ()+1) * *(getQ()+2) + *getQ() *
+              *(getQ()+3)), *getQ() * *getQ() + *(getQ()+1) * *(getQ()+1)
+              - *(getQ()+2) * *(getQ()+2) - *(getQ()+3) * *(getQ()+3))) * RAD_TO_DEG;
+  IMU.pitch = (-asin(2.0f * (*(getQ()+1) * *(getQ()+3) - *getQ() *
+                *(getQ()+2)))) * RAD_TO_DEG;
 }
 
 // macro for drawing picture
@@ -313,8 +363,7 @@ void setup() {
 }
 
 void loop() {
-    //gameLoop();
-    //M5.update();
+  getSensorValue();
 }
 
 void gameInit(){
@@ -379,9 +428,10 @@ void gameLoop(void *arg){
     M5.update();
     // update
     // move paddle0
-    if(M5.BtnC.isPressed())paddle[0].x-=2;
-    if(M5.BtnA.isPressed())paddle[0].x+=2;
-    if((cnt++ % 5) == 0)  notifyPaddleMove(paddle[0].x);
+    float diff = IMU.roll / 20;
+    paddle[0].x += diff;
+    if((cnt++ % 10) == 0 && diff != 0.0)
+        notifyPaddleMove(paddle[0].x);
 
     // move paddle1
     paddle[1].x += paddle[1].vx;
