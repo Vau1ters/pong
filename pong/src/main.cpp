@@ -278,6 +278,7 @@ bool bufFlag = false;
 
 // game object
 GameObject ball, paddle[2];
+int otherPaddleX;
 
 int score[2];
 
@@ -289,7 +290,7 @@ void flush();
 void gameInit();
 void gameLoop(void *arg);
 void swapBuffer();
-GameObject collideWall(GameObject object);
+GameObject collideWall(GameObject object, bool reflect);
 bool aabb(GameObject o1, GameObject o2);
 void resetGame();
 
@@ -340,7 +341,7 @@ void setBallState(int x, int y, int vx, int vy){
 // 相手のパドルの位置を指定するときにこれを呼ぶ
 void setOtherPaddleState(int x){
     int new_x = SCREEN_WIDTH - PADDLE_WIDTH - x;
-/*    int dir = new_x - paddle[1].x;
+    int dir = new_x - otherPaddleX;
 
     if(dir < 0){
         paddle[1].vx = -2;
@@ -348,8 +349,9 @@ void setOtherPaddleState(int x){
         paddle[1].vx = 2;
     }else{
         paddle[1].vx = 0;
-    }*/
+    }
     paddle[1].x = new_x;
+    otherPaddleX = new_x;
 }
 
 // 相手のゴールに入ったときにこれを呼ぶ
@@ -366,7 +368,7 @@ void setAccelX(int x){
 void resetGame(){
     ball.x = 110;
     ball.y = 150;
-    paddle[0].x = paddle[1].x = 95;
+    otherPaddleX = paddle[0].x = paddle[1].x = 95;
     paddle[0].y = 310;
     paddle[1].y = 5;
     ball.vx = ball.vy = (isStartPlayer?1:-1) * 2;
@@ -379,7 +381,7 @@ void gameLoop(void *arg){
     // move paddle0
     if(M5.BtnC.isPressed())paddle[0].x-=2;
     if(M5.BtnA.isPressed())paddle[0].x+=2;
-    if((cnt++ % 10) == 0 && (M5.BtnC.isPressed() || M5.BtnA.isPressed()))  notifyPaddleMove(paddle[0].x);
+    if((cnt++ % 5) == 0)  notifyPaddleMove(paddle[0].x);
 
     // move paddle1
     paddle[1].x += paddle[1].vx;
@@ -400,9 +402,9 @@ void gameLoop(void *arg){
     }
 
     // wall
-    ball = collideWall(ball);
+    ball = collideWall(ball, true);
     for(int i = 0; i < 2; i++){
-        paddle[i] = collideWall(paddle[i]);
+        paddle[i] = collideWall(paddle[i], false);
     }
 
     // goal judge
@@ -431,22 +433,22 @@ bool aabb(GameObject o1, GameObject o2){
         o1.y + o1.height > o2.y &&
         o2.y + o2.height > o1.y;
 }
-GameObject collideWall(GameObject object){
+GameObject collideWall(GameObject object, bool reflect){
     if (object.x < 0){
         object.x = 0;
-        object.vx = -object.vx;
+        if (reflect) object.vx = -object.vx;
     }
     if (object.x > SCREEN_WIDTH - object.width){
         object.x = SCREEN_WIDTH - object.width;
-        object.vx = -object.vx;
+        if (reflect) object.vx = -object.vx;
     }
     if (object.y < 0){
         object.y = 0;
-        object.vy = -object.vy;
+        if (reflect) object.vy = -object.vy;
     }
     if (object.y > SCREEN_HEIGHT - object.height){
         object.y = SCREEN_HEIGHT - object.height;
-        object.vy = -object.vy;
+        if (reflect) object.vy = -object.vy;
     }
     return object;
 }
