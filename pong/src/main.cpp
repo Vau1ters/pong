@@ -339,6 +339,7 @@ int ballSpeedCount;
 void clean(bool buf);
 void drawBall(int x, int y);
 void drawPaddle(int x, int y);
+void drawCenterLine();
 void flush();
 void gameInit();
 void gameLoop(void *arg);
@@ -405,8 +406,8 @@ void winTheGame(){
 }
 
 void resetGame(){
-    ball.x = 110;
-    ball.y = 150;
+    ball.x = 115;
+    ball.y = 155;
     paddle[0].x = paddle[1].x = 95;
     paddle[0].y = 305;
     paddle[1].y = 10;
@@ -446,7 +447,7 @@ void gameLoop(void *arg){
     (ay < -0.1)?-2:
     0;
     paddle[0].x += diff;
-    if((updateCount++ % 10) == 0 && diff != 0.0)
+    if(diff != 0.0)
         notifyPaddleMove(paddle[0].x);
 
     // move paddle1
@@ -485,13 +486,23 @@ void gameLoop(void *arg){
 
     // draw
     clean(bufFlag);
+    drawCenterLine();
     drawBall(ball.x, ball.y);
     for(int i = 0; i < 2; i++){
         drawPaddle(paddle[i].x, paddle[i].y);
     }
     flush();
-    M5.Lcd.setCursor(0, 0);
-    M5.Lcd.printf("%d, %d", score[0], score[1]);
+    M5.Lcd.setCursor(64, 32);
+    M5.Lcd.printf("%d", score[1]);
+    M5.Lcd.setCursor(256, 32);
+    M5.Lcd.printf("%d", score[0]);
+    if(startCount > 0){
+        M5.Lcd.setCursor(272, 120);
+        M5.Lcd.printf("you");
+    }else if(startCount == 0){
+        M5.Lcd.setCursor(272, 120);
+        M5.Lcd.printf("   ");
+    }
     swapBuffer();
 
 }
@@ -538,6 +549,12 @@ void drawPaddle(int x, int y){
         for (int j = 0; j < PADDLE_HEIGHT; j++){
             dotset(bufFlag, y + j, x + i, 1);
         }
+    }
+}
+
+void drawCenterLine(){
+    for(int i = 0; i < 24; i++){
+        dotset(bufFlag, 160, i * 10, 1);
     }
 }
 
