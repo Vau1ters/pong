@@ -438,7 +438,13 @@ void gameLoop(void *arg){
     }
 
     // move paddle0
-    float diff = IMU.roll / 20;
+    float ay = IMU.ay;
+    int diff = 
+    (ay > 0.4)?4:
+    (ay > 0.1)?2:
+    (ay < -0.4)?-4:
+    (ay < -0.1)?-2:
+    0;
     paddle[0].x += diff;
     if((updateCount++ % 10) == 0 && diff != 0.0)
         notifyPaddleMove(paddle[0].x);
