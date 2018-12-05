@@ -18,6 +18,7 @@ WiFiUDP udp;
 static void startAP() {
   isStartPlayer = true;
   Serial.println("btnA pressed; starting WiFi AP");
+  M5.Lcd.println("btnA pressed; starting WiFi AP");
   WiFi.softAP(wifiSsid, wifiPassword);
   Serial.print("local IP address: ");
   Serial.println(WiFi.softAPIP());
@@ -43,6 +44,7 @@ static void startAP() {
 static void connectAP() {
   isStartPlayer = false;
   Serial.println("btnB pressed; connecting to WiFi AP");
+  M5.Lcd.println("btnB pressed; connecting to WiFi AP");
   WiFi.begin(wifiSsid, wifiPassword);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -74,6 +76,11 @@ static void connectAP() {
 
 static void WiFiSetup() {
   M5.Lcd.println("press btn A or B");
+  M5.Lcd.setCursor(60, 200);
+  M5.Lcd.printf("[A]");
+  M5.Lcd.setCursor(150, 200);
+  M5.Lcd.printf("[B]");
+  M5.Lcd.setCursor(0, 30);
   while (true) {
     if (M5.BtnA.wasPressed()) {
       startAP();
@@ -492,10 +499,10 @@ void gameLoop(void *arg){
     M5.Lcd.printf("%d", score[1]);
     M5.Lcd.setCursor(256, 32);
     M5.Lcd.printf("%d", score[0]);
-    if(startCount > 0){
+    if(startCount > 1){
         M5.Lcd.setCursor(272, 120);
         M5.Lcd.printf("you");
-    }else if(startCount == 0){
+    }else if(startCount == 1){
         M5.Lcd.setCursor(272, 120);
         M5.Lcd.printf("   ");
     }
