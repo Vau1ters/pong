@@ -12,19 +12,17 @@ void setOtherPaddleState(int);
 void setBallState(int, int, int, int);
 void winTheGame();
 
-boolean isServer;
 boolean isStartPlayer;
 WiFiUDP udp;
 
 static void startAP() {
-  isServer = true;
+  isStartPlayer = true;
   Serial.println("btnA pressed; starting WiFi AP");
   WiFi.softAP(wifiSsid, wifiPassword);
   Serial.print("local IP address: ");
   Serial.println(WiFi.softAPIP());
 
   Serial.println("waiting for client...");
-  isServer = true;
   udp.begin(portNumber);
   while (true) {
     char buf[4];
@@ -43,6 +41,7 @@ static void startAP() {
 }
 
 static void connectAP() {
+  isStartPlayer = false;
   Serial.println("btnB pressed; connecting to WiFi AP");
   WiFi.begin(wifiSsid, wifiPassword);
   while (WiFi.status() != WL_CONNECTED) {
@@ -56,7 +55,6 @@ static void connectAP() {
   Serial.println(WiFi.gatewayIP());
 
   Serial.println("connecting to server...");
-  isServer = false;
   udp.begin(portNumber);
   udp.beginPacket(WiFi.gatewayIP(), portNumber);
   udp.write(reinterpret_cast<const uint8_t *>("ping"), 4);
@@ -356,8 +354,6 @@ void setup() {
     MPU9250setup();
     // Become a WiFi AP or client, and then connect to the other device
     WiFiSetup();
-
-    if(isServer) isStartPlayer = true;
 
     gameInit();
 
